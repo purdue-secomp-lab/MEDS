@@ -46,6 +46,7 @@ if(COMPILER_RT_BUILD_SANITIZERS)
   endif()
 
   compiler_rt_build_sanitizer(asan)
+  compiler_rt_build_sanitizer(meds)
   compiler_rt_build_sanitizer(dfsan)
   compiler_rt_build_sanitizer(msan)
   compiler_rt_build_sanitizer(tsan tsan/dd)

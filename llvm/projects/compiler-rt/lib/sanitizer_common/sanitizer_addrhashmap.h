@@ -89,9 +89,96 @@ class AddrHashMap {
     bool                   remove_;
     bool                   create_;
   };
+  template<typename U>
+  struct HashValue {
+    HashValue<U>(uptr a, U v) : addr(a), value(v) {}
+    uptr addr;
+    U value;
+  };
+
+  class Iterator {
+   public:
+    Iterator(AddrHashMap<T, kSize>* map) :
+      map_(map), bucket_idx_(0), embed_idx_(0), add_idx_(0) {
+      if (operator*().addr == 0)
+        operator++();
+    }
+    Iterator(const Iterator& src) = default;
+    Iterator& operator=(const Iterator& src) = default;
+    ~Iterator() {
+      if (bucket_idx_ < kSize && embed_idx_ >= kBucketSize) {
+        Bucket *b = &map_->table_[bucket_idx_];
+        b->mtx.ReadUnlock();
+      }
+    }
+    HashValue<T*> operator*() {
+      Bucket *b = &map_->table_[bucket_idx_];
+      Cell *c;
+      if (embed_idx_ < kBucketSize) {
+        c = &b->cells[embed_idx_];
+      } else {
+        AddBucket *add = (AddBucket*)atomic_load(&b->add, memory_order_relaxed);
+        if (add == nullptr)
+          return HashValue<T*>(0, nullptr);
+        c = &add->cells[add_idx_];
+      }
+      uptr addr = atomic_load(&c->addr, memory_order_relaxed);
+      return HashValue<T*>(addr, &c->val);
+    }
+    Iterator& operator++() {
+      do {
+        if (bucket_idx_ == kSize)
+          return *this;
+        if (embed_idx_ < kBucketSize) {
+          ++embed_idx_;
+        } else {
+          Bucket *b = &map_->table_[bucket_idx_];
+          // We must hold the read lock across the iteration.
+          b->mtx.ReadLock();
+          AddBucket *add = (AddBucket*)atomic_load(&b->add,
+                                                   memory_order_relaxed);
+          if (add == nullptr || ++add_idx_ >= add->size) {
+            b->mtx.ReadUnlock();
+            add_idx_ = 0;
+            embed_idx_ = 0;
+            ++bucket_idx_;
+          }
+        }
+      } while (operator*().addr == 0);
+      return *this;
+    }
+    Iterator operator++(int) {
+      Iterator temp(*this);
+      operator++();
+      return temp;
+    }
+    // Decrement not supported.
+    bool operator==(const Iterator& vs) const {
+      return (vs.map_ == map_ && vs.bucket_idx_ == bucket_idx_ &&
+              vs.embed_idx_ == embed_idx_ && vs.add_idx_ == add_idx_);
+    }
+    bool operator!=(const Iterator& vs) const {
+      return (vs.map_ != map_ || vs.bucket_idx_ != bucket_idx_ ||
+              vs.embed_idx_ != embed_idx_ || vs.add_idx_ != add_idx_);
+    }
+
+   private:
+    Iterator(AddrHashMap<T, kSize>* map, uptr bucket_idx) :
+      map_(map), bucket_idx_(bucket_idx), embed_idx_(0), add_idx_(0) {}
+    friend AddrHashMap<T, kSize>;
+    AddrHashMap<T, kSize> *map_;
+    uptr bucket_idx_;
+    uptr embed_idx_;
+    uptr add_idx_;
+  };
+
+  // We do not support erase or insert iterators.
+  Iterator begin() { return Iterator(this); }
+  Iterator end() { return Iterator(this, kSize); }
 
  private:
   friend class Handle;
+  friend class Iterator;
   Bucket *table_;
 
   void acquire(Handle *h);

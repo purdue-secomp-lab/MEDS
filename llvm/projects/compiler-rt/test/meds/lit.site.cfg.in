@@ -1,0 +1,14 @@
+@LIT_SITE_CFG_IN_HEADER@
+
+# Tool-specific config options.
+config.name_suffix = "@MEDS_TEST_CONFIG_SUFFIX@"
+config.target_cflags = "@MEDS_TEST_TARGET_CFLAGS@"
+config.target_arch = "@MEDS_TEST_TARGET_ARCH@"
+config.bits = "@MEDS_TEST_BITS"
+config.android = "@ANDROID"
+
+# Load common config for all compiler-rt lit tests.
+lit_config.load_config(config, "@COMPILER_RT_BINARY_DIR@/test/lit.common.configured")
+
+# Load tool-specific config that would do the real work.
+lit_config.load_config(config, "@MEDS_LIT_SOURCE_DIR@/lit.common.cfg")

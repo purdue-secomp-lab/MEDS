@@ -39,6 +39,8 @@ uptr internal_mmap(void *addr, uptr length, int prot, int flags,
                    int fd, OFF_T offset);
 uptr internal_munmap(void *addr, uptr length);
 int internal_mprotect(void *addr, uptr length, int prot);
+uptr internal_mremap(void *old_addr, uptr old_size, uptr new_size, int flags,
+                     void *new_addr);
 
 // OS
 uptr internal_filesize(fd_t fd);  // -1 on error.

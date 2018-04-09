@@ -139,6 +139,12 @@ int internal_mprotect(void *addr, uptr length, int prot) {
   return internal_syscall(SYSCALL(mprotect), (uptr)addr, length, prot);
 }
 
+uptr internal_mremap(void *old_addr, uptr old_size, uptr new_size, int flags,
+                     void *new_addr) {
+  return internal_syscall(SYSCALL(mremap), (uptr)old_addr, old_size, new_size,
+                          flags, (uptr)new_addr);
+}
+
 uptr internal_close(fd_t fd) {
   return internal_syscall(SYSCALL(close), fd);
 }
