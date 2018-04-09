@@ -282,6 +282,14 @@ static cl::opt<int> ClDebugMin("asan-debug-min", cl::desc("Debug min inst"),
 static cl::opt<int> ClDebugMax("asan-debug-max", cl::desc("Debug max inst"),
                                cl::Hidden, cl::init(-1));
 
+// Meds flags.
+static cl::opt<bool> ClMedsStack("meds-stack",
+                                 cl::desc("Use meds stack allocation"),
+                                 cl::Hidden, cl::init(false));
+static cl::opt<bool> ClMedsGlobal("meds-global",
+                                  cl::desc("Use meds global allocation"),
+                                  cl::Hidden, cl::init(false));
+
 STATISTIC(NumInstrumentedReads, "Number of instrumented reads");
 STATISTIC(NumInstrumentedWrites, "Number of instrumented writes");
 STATISTIC(NumOptimizedAccessesToGlobalVar,
@@ -536,7 +544,7 @@ struct AddressSanitizer : public FunctionPass {
 
   DominatorTree &getDominatorTree() const { return *DT; }
 
- private:
+ protected:
   void initializeCallbacks(Module &M);
 
   bool LooksLikeCodeInBug11395(Instruction *I);
@@ -586,6 +594,19 @@ struct AddressSanitizer : public FunctionPass {
   friend struct FunctionStackPoisoner;
 };
 
+// Meds Functin Pass
+struct Meds : public AddressSanitizer {
+  explicit Meds(bool CompileKernel = false, bool Recover = false,
+                bool UseAfterScope = false)
+    : AddressSanitizer(CompileKernel, Recover, UseAfterScope) {}
+  StringRef getPassName() const override {
+    return "MedsFunctionPass";
+  }
+  bool runOnFunction(Function &F) override;
+  friend struct FunctionStackPoisoner;
+  friend struct MedsStackPoisoner;
+};
+
 class AddressSanitizerModule : public ModulePass {
  public:
   explicit AddressSanitizerModule(bool CompileKernel = false,
@@ -596,7 +617,7 @@ class AddressSanitizerModule : public ModulePass {
   static char ID;  // Pass identification, replacement for typeid
   StringRef getPassName() const override { return "AddressSanitizerModule"; }
 
-private:
+protected:
   void initializeCallbacks(Module &M);
 
   bool InstrumentGlobals(IRBuilder<> &IRB, Module &M);
@@ -638,6 +659,23 @@ private:
   Function *AsanUnregisterGlobals;
   Function *AsanRegisterImageGlobals;
   Function *AsanUnregisterImageGlobals;
+};
+
+// Meds Module Pass
+class MedsModule : public AddressSanitizerModule {
+  public:
+    explicit MedsModule(bool CompileKernel = false,
+                        bool Recover = false)
+      : AddressSanitizerModule(CompileKernel, Recover) { }
+
+    bool runOnModule(Module &M) override;
+    StringRef getPassName() const override { return "MedsModule"; }
+  private:
+    void initializeCallbacks(Module &M);
+    bool InstrumentMedsGlobals(IRBuilder<> &IRB, Module &M);
+
+    Function *MedsGlobalAlloc;
+    Function *MedsGlobalFree;
 };
 
 // Stack poisoning does not play well with exception handling.
@@ -879,6 +917,124 @@ struct FunctionStackPoisoner : public InstVisitor<FunctionStackPoisoner> {
                      Instruction *ThenTerm, Value *ValueIfFalse);
 };
 
+// Meds Stack Allocation
+struct MedsStackPoisoner : public InstVisitor<MedsStackPoisoner> {
+  Function &F;
+  Meds &MEDS;
+  DIBuilder DIB;
+  LLVMContext *C;
+  Type *IntptrTy;
+  Type *IntptrPtrTy;
+  ShadowMapping Mapping;
+
+  SmallVector<AllocaInst *, 16> AllocaVec;
+  SmallVector<AllocaInst *, 16> StaticAllocasToMoveUp;
+  SmallVector<Instruction *, 8> RetVec;
+  unsigned StackAlignment;
+
+  Function *MedsStackAlloc;
+  Function *MedsStackFree;
+
+  SmallVector<AllocaInst *, 1> DynamicAllocaVec;
+  SmallVector<IntrinsicInst *, 1> StackRestoreVec;
+  AllocaInst *DynamicAllocaLayout = nullptr;
+  IntrinsicInst *LocalEscapeCall = nullptr;
+
+  // Maps Value to an AllocaInst from which the Value is originated.
+  typedef DenseMap<Value *, AllocaInst *> AllocaForValueMapTy;
+  AllocaForValueMapTy AllocaForValue;
+
+  bool HasNonEmptyInlineAsm = false;
+  bool HasReturnsTwiceCall = false;
+  std::unique_ptr<CallInst> EmptyInlineAsm;
+
+  MedsStackPoisoner(Function &F, Meds &MEDS)
+    : F(F),
+      MEDS(MEDS),
+      DIB(*F.getParent(), /*AllowUnresolved*/ false),
+      C(MEDS.C),
+      IntptrTy(MEDS.IntptrTy),
+      IntptrPtrTy(PointerType::get(IntptrTy, 0)),
+      Mapping(MEDS.Mapping),
+      StackAlignment(1 << Mapping.Scale),
+      EmptyInlineAsm(CallInst::Create(MEDS.EmptyAsm)) { }
+
+  bool runOnFunction() {
+    if (!ClMedsStack) return false;
+
+    for (BasicBlock *BB : depth_first(&F.getEntryBlock())) visit(*BB);
+
+    if (AllocaVec.empty() && DynamicAllocaVec.empty()) return false;
+
+    initializeCallbacks(*F.getParent());
+
+    processDynamicAllocas();
+    processStaticAllocas();
+    return true;
+  }
+
+  void processStaticAllocas();
+  void processDynamicAllocas();
+
+  void createDynamicAllocasInitStorage();
+
+  void visitReturnInst(ReturnInst &RI) { RetVec.push_back(&RI); }
+  void visitResumeInst(ResumeInst &RI) { RetVec.push_back(&RI); }
+  void visitCleanupReturnInst(CleanupReturnInst &CRI) { RetVec.push_back(&CRI); }
+
+  void visitAllocaInst(AllocaInst &AI) {
+    if (!MEDS.isInterestingAlloca(AI)) {
+      if (AI.isStaticAlloca()) {
+        if (AllocaVec.empty())
+          return;
+        StaticAllocasToMoveUp.push_back(&AI);
+      }
+      return;
+    }
+    if (!AI.isStaticAlloca())
+      DynamicAllocaVec.push_back(&AI);
+    else
+      AllocaVec.push_back(&AI);
+  }
+
+  void visitIntrinsicInst(IntrinsicInst &II) {
+    Intrinsic::ID ID = II.getIntrinsicID();
+    if (ID == Intrinsic::stackrestore) StackRestoreVec.push_back(&II);
+    if (ID == Intrinsic::localescape) LocalEscapeCall = &II;
+  }
+
+  void visitCallSite(CallSite CS) {
+    Instruction *I = CS.getInstruction();
+    if (CallInst *CI = dyn_cast<CallInst>(I)) {
+      HasNonEmptyInlineAsm |=
+        CI->isInlineAsm() && !CI->isIdenticalTo(EmptyInlineAsm.get());
+      HasReturnsTwiceCall |= CI->canReturnTwice();
+    }
+  }
+
+  CallInst *replaceAllocaInst(AllocaInst *AI) {
+    IRBuilder<> IRB(AI);
+    const unsigned ElementSize =
+      F.getParent()->getDataLayout().getTypeAllocSize(AI->getAllocatedType());
+    Value *OldSize =
+      IRB.CreateMul(IRB.CreateIntCast(AI->getArraySize(), IntptrTy, false),
+                    ConstantInt::get(IntptrTy, ElementSize));
+    Value *Alloc = IRB.CreateCall(MedsStackAlloc, {OldSize});
+    Value *V = IRB.CreateIntToPtr(Alloc, AI->getType());
+    AI->replaceAllUsesWith(V);
+    AI->eraseFromParent();
+    return dyn_cast<CallInst>(Alloc);
+  }
+
+  void freeAllocasBeforeInst(Instruction *InstBefore,
+                             Value *Alloca) {
+    IRBuilder<> IRB(InstBefore);
+    IRB.CreateCall(MedsStackFree, {Alloca});
+  }
+
+  void initializeCallbacks(Module &M);
+};
+
 } // anonymous namespace
 
 char AddressSanitizer::ID = 0;
@@ -910,6 +1066,33 @@ ModulePass *llvm::createAddressSanitizerModulePass(bool CompileKernel,
   assert(!CompileKernel || Recover);
   return new AddressSanitizerModule(CompileKernel, Recover);
 }
+
+INITIALIZE_PASS_BEGIN(
+    Meds, "meds",
+    "Meds: enhancing memory error detections.", false, false)
+INITIALIZE_PASS_DEPENDENCY(DominatorTreeWrapperPass)
+INITIALIZE_PASS_DEPENDENCY(TargetLibraryInfoWrapperPass)
+INITIALIZE_PASS_END(
+    Meds, "meds",
+    "Meds: enhancing memory error detections.", false, false)
+FunctionPass *llvm::createMedsFunctionPass(bool CompileKernel,
+                                           bool Recover,
+                                           bool UseAfterScope) {
+  assert(!CompileKernel || Recover);
+  return new Meds(CompileKernel, Recover, UseAfterScope);
+}
+
+INITIALIZE_PASS(
+    MedsModule, "meds-module",
+    "Meds: enhancing memory error detections."
+    "ModulePass",
+    false, false)
+ModulePass *llvm::createMedsModulePass(bool CompileKernel,
+                                       bool Recover) {
+  assert(!CompileKernel || Recover);
+  return new MedsModule(CompileKernel, Recover);
+}
+
 
 static size_t TypeSizeToSizeIndex(uint32_t TypeSize) {
   size_t Res = countTrailingZeros(TypeSize / 8);
@@ -2806,3 +2989,159 @@ bool AddressSanitizer::isSafeAccess(ObjectSizeOffsetVisitor &ObjSizeVis,
   return Offset >= 0 && Size >= uint64_t(Offset) &&
          Size - uint64_t(Offset) >= TypeSize / 8;
 }
+
+bool Meds::runOnFunction(Function &F) {
+  if (ClMedsStack)
+    ClStack = false;
+  bool ret = AddressSanitizer::runOnFunction(F);
+  if (ClMedsStack) {
+    MedsStackPoisoner MSP(F, *this);
+    bool ChangedStack = MSP.runOnFunction();
+    ret |= ChangedStack;
+  }
+  return ret;
+}
+
+bool MedsModule::runOnModule(Module &M) {
+  C = &(M.getContext());
+  int LongSize = M.getDataLayout().getPointerSizeInBits();
+  IntptrTy = Type::getIntNTy(*C, LongSize);
+  TargetTriple = Triple(M.getTargetTriple());
+  Mapping = getShadowMapping(TargetTriple, LongSize, CompileKernel);
+  initializeCallbacks(M);
+
+  bool Changed = false;
+
+  // TODO(glider): temporarily disabled globals instrumentation for KASan.
+  if (ClMedsGlobal && !CompileKernel) {
+    Function *CtorFunc = M.getFunction(kAsanModuleCtorName);
+    assert(CtorFunc);
+    IRBuilder<> IRB(CtorFunc->getEntryBlock().getTerminator());
+    Changed |= InstrumentMedsGlobals(IRB, M);
+  }
+  else if (ClGlobals && !CompileKernel) {
+    Function *CtorFunc = M.getFunction(kAsanModuleCtorName);
+    assert(CtorFunc);
+    IRBuilder<> IRB(CtorFunc->getEntryBlock().getTerminator());
+    Changed |= AddressSanitizerModule::InstrumentGlobals(IRB, M);
+  }
+
+  return Changed;
+}
+
+void MedsModule::initializeCallbacks(Module &M) {
+  AddressSanitizerModule::initializeCallbacks(M);
+
+  IRBuilder<> IRB(*C);
+
+  MedsGlobalAlloc = checkSanitizerInterfaceFunction(
+  M.getOrInsertFunction("__meds_global_alloc", IntptrTy,
+                        IntptrTy, IntptrTy, nullptr));
+  assert(MedsGlobalAlloc && "Meds failed to locate __meds_global_alloc");
+  MedsGlobalAlloc->setLinkage(Function::ExternalLinkage);
+
+  MedsGlobalFree = checkSanitizerInterfaceFunction(
+  M.getOrInsertFunction("__meds_global_free", IRB.getVoidTy(),
+                        IntptrTy, nullptr));
+  assert(MedsGlobalFree && "Meds failed to locate __meds_global_free");
+  MedsGlobalFree->setLinkage(Function::ExternalLinkage);
+}
+
+bool MedsModule::InstrumentMedsGlobals(IRBuilder<> &IRB, Module &M) {
+  GlobalsMD.init(M);
+
+  SmallVector<GlobalVariable *, 16> GlobalsToChange;
+
+  for (auto &G : M.globals()) {
+    if (ShouldInstrumentGlobal(&G)) GlobalsToChange.push_back(&G);
+  }
+
+  size_t n = GlobalsToChange.size();
+  if (n == 0) return false;
+
+  auto &DL = M.getDataLayout();
+  IRBuilder<> IRB_Dtor = CreateAsanModuleDtor(M);
+
+  for (size_t i = 0; i < n; i++) {
+    GlobalVariable *G = GlobalsToChange[i];
+    G->setLinkage(GlobalVariable::LinkageTypes::ExternalLinkage);
+    Constant *NewInitializer = ConstantInt::get(IntptrTy, 0);
+    GlobalVariable *NewAddr =
+      new GlobalVariable(M, IntptrTy, false,
+                         G->getLinkage(),
+                         NewInitializer);
+    NewAddr->setAlignment(8);
+    Type *Ty = G->getValueType();
+    uint64_t SizeInBytes = DL.getTypeAllocSize(Ty);
+
+    Value *Alloc = IRB.CreateCall(MedsGlobalAlloc,
+               {IRB.CreatePointerCast(G, IntptrTy),
+               ConstantInt::get(IntptrTy, SizeInBytes)});
+    IRB.CreateStore(Alloc, NewAddr);
+    Value *Free = IRB_Dtor.CreateLoad(NewAddr);
+    IRB_Dtor.CreateCall(MedsGlobalFree, {Free});
+  }
+  return true;
+}
+
+
+void MedsStackPoisoner::initializeCallbacks(Module &M) {
+  IRBuilder<> IRB(*C);
+
+  MedsStackAlloc = checkSanitizerInterfaceFunction(M.getOrInsertFunction(
+      "__meds_stack_alloc", IntptrTy, IntptrTy, nullptr));
+  assert(MedsStackAlloc && "Meds failed to lcoate __meds_stack_alloc");
+
+  MedsStackFree = checkSanitizerInterfaceFunction(M.getOrInsertFunction(
+      "__meds_stack_free", IRB.getVoidTy(), IntptrTy, nullptr));
+  assert(MedsStackFree && "Meds failed to lcoate __meds_stack_freec");
+}
+
+void MedsStackPoisoner::processStaticAllocas() {
+  if (AllocaVec.empty())
+    return;
+
+  Instruction *InsBefore = AllocaVec[0];
+  IRBuilder<> IRB(InsBefore);
+
+  auto InsBeforeB = InsBefore->getParent();
+  assert(InsBeforeB == &F.getEntryBlock());
+  for (auto *AI : StaticAllocasToMoveUp)
+    if (AI->getParent() == InsBeforeB)
+      AI->moveBefore(InsBefore);
+
+  if (LocalEscapeCall) LocalEscapeCall->moveBefore(InsBefore);
+
+  bool DoMedsStackAlloc = ClMedsStack;
+  DoMedsStackAlloc &= !HasNonEmptyInlineAsm && !HasReturnsTwiceCall;
+  if (DoMedsStackAlloc) {
+    SmallVector<CallInst *, 16> MedsCallVec;
+    for (AllocaInst *AI : AllocaVec) {
+      MedsCallVec.push_back(replaceAllocaInst(AI));
+    }
+    for (Instruction *RI : RetVec) {
+      for (CallInst *CI : MedsCallVec) {
+        freeAllocasBeforeInst(RI, CI);
+      }
+    }
+  }
+
+
+}
+
+void MedsStackPoisoner::processDynamicAllocas() {
+  if (!ClInstrumentDynamicAllocas || DynamicAllocaVec.empty()) return;
+
+  SmallVector<CallInst *, 16> MedsCallVec;
+  for (AllocaInst *AI : DynamicAllocaVec) {
+    MedsCallVec.push_back(replaceAllocaInst(AI));
+  }
+  for (Instruction *RI : RetVec) {
+    for (CallInst *CI : MedsCallVec) {
+      freeAllocasBeforeInst(RI, CI);
+    }
+  }
+}
+
+
+

@@ -58,6 +58,8 @@ BasicBlock::iterator llvm::PrepareToSplitEntryBlock(BasicBlock &BB,
 void llvm::initializeInstrumentation(PassRegistry &Registry) {
   initializeAddressSanitizerPass(Registry);
   initializeAddressSanitizerModulePass(Registry);
+  initializeMedsPass(Registry);
+  initializeMedsModulePass(Registry);
   initializeBoundsCheckingPass(Registry);
   initializeGCOVProfilerLegacyPassPass(Registry);
   initializePGOInstrumentationGenLegacyPassPass(Registry);

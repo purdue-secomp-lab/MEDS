@@ -107,6 +107,13 @@ FunctionPass *createAddressSanitizerFunctionPass(bool CompileKernel = false,
 ModulePass *createAddressSanitizerModulePass(bool CompileKernel = false,
                                              bool Recover = false);
 
+// Insert Meds instrumentation
+FunctionPass *createMedsFunctionPass(bool CompileKernel = false,
+                                     bool Recover = false,
+                                     bool UseAfterScope = false);
+ModulePass *createMedsModulePass(bool CompileKernel = false,
+                                 bool Recover = false);
+
 // Insert MemorySanitizer instrumentation (detection of uninitialized reads)
 FunctionPass *createMemorySanitizerPass(int TrackOrigins = 0,
                                         bool Recover = false);
