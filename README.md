@@ -111,7 +111,7 @@ $ clang -fsanitize=meds -mllvm -meds-globals=1 -mcmodel=large -Wl,-emit-relocs t
 
 - Example: to protect heap/stack/global using MEDS
 ```console
-$ clang -fsanitize=meds -mllvm -meds-stack=1 -mllvm -meds-globals=1 -mcmodel=lare -Wl,--emit-relocs
+$ clang -fsanitize=meds -mllvm -meds-stack=1 -mllvm -meds-globals=1 -mcmodel=large -Wl,--emit-relocs
 ```
 
 # Contributors
