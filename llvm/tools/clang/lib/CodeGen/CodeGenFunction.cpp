@@ -735,12 +735,18 @@ void CodeGenFunction::StartFunction(GlobalDecl GD,
 
   if (D) {
     // Apply the no_sanitize* attributes to SanOpts.
-    for (auto Attr : D->specific_attrs<NoSanitizeAttr>())
+    for (auto Attr : D->specific_attrs<NoSanitizeAttr>()) {
       SanOpts.Mask &= ~Attr->getMask();
+      if (Attr->getMask() & SanitizerKind::Address) {
+        SanOpts.Mask &= ~SanitizerKind::Meds;
+      }
+    }
   }
 
   // Apply sanitizer attributes to the function.
-  if (SanOpts.hasOneOf(SanitizerKind::Address | SanitizerKind::KernelAddress))
+  if (SanOpts.hasOneOf(SanitizerKind::Address |
+                       SanitizerKind::KernelAddress |
+                       SanitizerKind::Meds))
     Fn->addFnAttr(llvm::Attribute::SanitizeAddress);
   if (SanOpts.has(SanitizerKind::Thread))
     Fn->addFnAttr(llvm::Attribute::SanitizeThread);

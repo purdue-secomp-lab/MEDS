@@ -3300,6 +3300,11 @@ collectSanitizerRuntimes(const ToolChain &TC, const ArgList &Args,
         StaticRuntimes.push_back("asan_cxx");
     }
   }
+  if (SanArgs.needsMedsRt()) {
+    StaticRuntimes.push_back("meds");
+    if(SanArgs.linkCXXRuntimes())
+      StaticRuntimes.push_back("meds_cxx");
+  }
   if (SanArgs.needsDfsanRt())
     StaticRuntimes.push_back("dfsan");
   if (SanArgs.needsLsanRt())

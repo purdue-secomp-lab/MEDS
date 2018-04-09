@@ -1458,7 +1458,8 @@ bool CodeGenModule::isInSanitizerBlacklist(llvm::GlobalVariable *GV,
                                            StringRef Category) const {
   // For now globals can be blacklisted only in ASan and KASan.
   if (!LangOpts.Sanitize.hasOneOf(
-          SanitizerKind::Address | SanitizerKind::KernelAddress))
+          SanitizerKind::Address | SanitizerKind::KernelAddress | 
+          SanitizerKind::Meds))
     return false;
   const auto &SanitizerBL = getContext().getSanitizerBlacklist();
   if (SanitizerBL.isBlacklistedGlobal(GV->getName(), Category))

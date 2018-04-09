@@ -2477,6 +2477,7 @@ bool CompilerInvocation::CreateFromArgs(CompilerInvocation &Res,
   // names.
   Res.getCodeGenOpts().DiscardValueNames &=
       !LangOpts.Sanitize.has(SanitizerKind::Address) &&
+      !LangOpts.Sanitize.has(SanitizerKind::Meds) &&
       !LangOpts.Sanitize.has(SanitizerKind::Memory);
 
   // FIXME: ParsePreprocessorArgs uses the FileManager to read the contents of

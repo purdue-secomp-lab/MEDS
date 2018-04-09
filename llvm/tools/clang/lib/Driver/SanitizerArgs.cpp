@@ -30,8 +30,8 @@ enum : SanitizerMask {
   NeedsUbsanCxxRt = Vptr | CFI,
   NotAllowedWithTrap = Vptr,
   RequiresPIE = DataFlow,
-  NeedsUnwindTables = Address | Thread | Memory | DataFlow,
-  SupportsCoverage = Address | Memory | Leak | Undefined | Integer | DataFlow,
+  NeedsUnwindTables = Address | Meds | Thread | Memory | DataFlow,
+  SupportsCoverage = Address | Meds | Memory | Leak | Undefined | Integer | DataFlow,
   RecoverableByDefault = Undefined | Integer,
   Unrecoverable = Unreachable | Return,
   LegacyFsanitizeRecoverMask = Undefined | Integer,
@@ -87,7 +87,7 @@ static std::string toString(const clang::SanitizerSet &Sanitizers);
 static bool getDefaultBlacklist(const Driver &D, SanitizerMask Kinds,
                                 std::string &BLPath) {
   const char *BlacklistFile = nullptr;
-  if (Kinds & Address)
+  if (Kinds & (Address | Meds))
     BlacklistFile = "asan_blacklist.txt";
   else if (Kinds & Memory)
     BlacklistFile = "msan_blacklist.txt";
@@ -164,7 +164,8 @@ static SanitizerMask parseSanitizeTrapArgs(const Driver &D,
 bool SanitizerArgs::needsUbsanRt() const {
   return ((Sanitizers.Mask & NeedsUbsanRt & ~TrapSanitizers.Mask) ||
           CoverageFeatures) &&
-         !Sanitizers.has(Address) && !Sanitizers.has(Memory) &&
+         !Sanitizers.has(Address) && !Sanitizers.has(Meds) &&
+         !Sanitizers.has(Memory) &&
          !Sanitizers.has(Thread) && !Sanitizers.has(DataFlow) && 
          !Sanitizers.has(Leak) && !CfiCrossDso;
 }
@@ -311,12 +312,15 @@ SanitizerArgs::SanitizerArgs(const ToolChain &TC,
   // Warn about incompatible groups of sanitizers.
   std::pair<SanitizerMask, SanitizerMask> IncompatibleGroups[] = {
       std::make_pair(Address, Thread), std::make_pair(Address, Memory),
+      std::make_pair(Meds, Address), std::make_pair(Meds, Thread),
+      std::make_pair(Meds, Memory), std::make_pair(Meds, KernelAddress),
       std::make_pair(Thread, Memory), std::make_pair(Leak, Thread),
       std::make_pair(Leak, Memory), std::make_pair(KernelAddress, Address),
       std::make_pair(KernelAddress, Leak),
       std::make_pair(KernelAddress, Thread),
       std::make_pair(KernelAddress, Memory),
       std::make_pair(Efficiency, Address),
+      std::make_pair(Efficiency, Meds),
       std::make_pair(Efficiency, Leak),
       std::make_pair(Efficiency, Thread),
       std::make_pair(Efficiency, Memory),
@@ -544,7 +548,7 @@ SanitizerArgs::SanitizerArgs(const ToolChain &TC,
       !(CoverageFeatures & CoverageTypes))
     CoverageFeatures |= CoverageEdge;
 
-  if (AllAddedKinds & Address) {
+  if (AllAddedKinds & (Address | Meds)) {
     AsanSharedRuntime =
         Args.hasArg(options::OPT_shared_libasan) || TC.getTriple().isAndroid();
     NeedPIE |= TC.getTriple().isAndroid();
@@ -732,7 +736,7 @@ void SanitizerArgs::addArgs(const ToolChain &TC, const llvm::opt::ArgList &Args,
   // https://code.google.com/p/address-sanitizer/issues/detail?id=373
   // We can't make this conditional on -fsanitize=leak, as that flag shouldn't
   // affect compilation.
-  if (Sanitizers.has(Memory) || Sanitizers.has(Address))
+  if (Sanitizers.has(Memory) || Sanitizers.has(Address) || Sanitizers.has(Meds))
     CmdArgs.push_back(Args.MakeArgString("-fno-assume-sane-operator-new"));
 
   // Require -fvisibility= flag on non-Windows when compiling if vptr CFI is

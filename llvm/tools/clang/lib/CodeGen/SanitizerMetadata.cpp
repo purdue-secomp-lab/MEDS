@@ -26,7 +26,8 @@ void SanitizerMetadata::reportGlobalToASan(llvm::GlobalVariable *GV,
                                            QualType Ty, bool IsDynInit,
                                            bool IsBlacklisted) {
   if (!CGM.getLangOpts().Sanitize.hasOneOf(SanitizerKind::Address |
-                                           SanitizerKind::KernelAddress))
+                                           SanitizerKind::KernelAddress | 
+                                           SanitizerKind::Meds))
     return;
   IsDynInit &= !CGM.isInSanitizerBlacklist(GV, Loc, Ty, "init");
   IsBlacklisted |= CGM.isInSanitizerBlacklist(GV, Loc, Ty);
@@ -58,7 +59,8 @@ void SanitizerMetadata::reportGlobalToASan(llvm::GlobalVariable *GV,
 void SanitizerMetadata::reportGlobalToASan(llvm::GlobalVariable *GV,
                                            const VarDecl &D, bool IsDynInit) {
   if (!CGM.getLangOpts().Sanitize.hasOneOf(SanitizerKind::Address |
-                                           SanitizerKind::KernelAddress))
+                                           SanitizerKind::KernelAddress |
+                                           SanitizerKind::Meds))
     return;
   std::string QualName;
   llvm::raw_string_ostream OS(QualName);
@@ -66,7 +68,7 @@ void SanitizerMetadata::reportGlobalToASan(llvm::GlobalVariable *GV,
 
   bool IsBlacklisted = false;
   for (auto Attr : D.specific_attrs<NoSanitizeAttr>())
-    if (Attr->getMask() & SanitizerKind::Address)
+    if (Attr->getMask() & (SanitizerKind::Address | SanitizerKind::Meds))
       IsBlacklisted = true;
   reportGlobalToASan(GV, D.getLocation(), OS.str(), D.getType(), IsDynInit,
                      IsBlacklisted);
@@ -76,7 +78,8 @@ void SanitizerMetadata::disableSanitizerForGlobal(llvm::GlobalVariable *GV) {
   // For now, just make sure the global is not modified by the ASan
   // instrumentation.
   if (CGM.getLangOpts().Sanitize.hasOneOf(SanitizerKind::Address |
-                                          SanitizerKind::KernelAddress))
+                                          SanitizerKind::KernelAddress |
+                                          SanitizerKind::Meds))
     reportGlobalToASan(GV, SourceLocation(), "", QualType(), false, true);
 }
 

@@ -45,14 +45,16 @@ class SanitizerArgs {
  public:
   /// Parses the sanitizer arguments from an argument list.
   SanitizerArgs(const ToolChain &TC, const llvm::opt::ArgList &Args);
-
+  
   bool needsAsanRt() const { return Sanitizers.has(SanitizerKind::Address); }
   bool needsSharedAsanRt() const { return AsanSharedRuntime; }
+  bool needsMedsRt() const { return Sanitizers.has(SanitizerKind::Meds); }
   bool needsTsanRt() const { return Sanitizers.has(SanitizerKind::Thread); }
   bool needsMsanRt() const { return Sanitizers.has(SanitizerKind::Memory); }
   bool needsLsanRt() const {
     return Sanitizers.has(SanitizerKind::Leak) &&
-           !Sanitizers.has(SanitizerKind::Address);
+           !Sanitizers.has(SanitizerKind::Address) &&
+           !Sanitizers.has(SanitizerKind::Meds);
   }
   bool needsUbsanRt() const;
   bool needsDfsanRt() const { return Sanitizers.has(SanitizerKind::DataFlow); }

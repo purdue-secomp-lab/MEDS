@@ -207,6 +207,18 @@ static void addKernelAddressSanitizerPasses(const PassManagerBuilder &Builder,
                                           /*Recover*/true));
 }
 
+static void addMedsPasses(const PassManagerBuilder &Builder,
+                          legacy::PassManagerBase &PM) {
+  const PassManagerBuilderWrapper &BuilderWrapper =
+      static_cast<const PassManagerBuilderWrapper&>(Builder);
+  const CodeGenOptions &CGOpts = BuilderWrapper.getCGOpts();
+  bool Recover = CGOpts.SanitizeRecover.has(SanitizerKind::Meds);
+  bool UseAfterScope = CGOpts.SanitizeAddressUseAfterScope;
+  PM.add(createMedsFunctionPass(/*CompileKernel*/ false, Recover, 
+                                UseAfterScope));
+  PM.add(createMedsModulePass(/*CompileKernel*/false, Recover));
+}
+
 static void addMemorySanitizerPass(const PassManagerBuilder &Builder,
                                    legacy::PassManagerBase &PM) {
   const PassManagerBuilderWrapper &BuilderWrapper =
@@ -383,6 +395,13 @@ void EmitAssemblyHelper::CreatePasses(legacy::PassManager &MPM,
                            addKernelAddressSanitizerPasses);
     PMBuilder.addExtension(PassManagerBuilder::EP_EnabledOnOptLevel0,
                            addKernelAddressSanitizerPasses);
+  }
+
+  if (LangOpts.Sanitize.has(SanitizerKind::Meds)) {
+    PMBuilder.addExtension(PassManagerBuilder::EP_OptimizerLast,
+                           addMedsPasses);
+    PMBuilder.addExtension(PassManagerBuilder::EP_EnabledOnOptLevel0,
+                           addMedsPasses);
   }
 
   if (LangOpts.Sanitize.has(SanitizerKind::Memory)) {

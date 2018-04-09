@@ -1097,7 +1097,8 @@ static bool HasFeature(const Preprocessor &PP, StringRef Feature) {
   return llvm::StringSwitch<bool>(Feature)
       .Case("address_sanitizer",
             LangOpts.Sanitize.hasOneOf(SanitizerKind::Address |
-                                       SanitizerKind::KernelAddress))
+                                       SanitizerKind::KernelAddress |
+                                       SanitizerKind::Meds))
       .Case("assume_nonnull", true)
       .Case("attribute_analyzer_noreturn", true)
       .Case("attribute_availability", true)

@@ -37,6 +37,8 @@
 #define SANITIZER_GROUP(NAME, ID, ALIAS)
 #endif
 
+// Meds
+SANITIZER("meds", Meds)
 
 // AddressSanitizer
 SANITIZER("address", Address)
