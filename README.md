@@ -10,6 +10,16 @@ MEDS: Enhancing Memory Error Detection for Large-Scale Applications
 $ make
 ```
 
+# Build Using Docker
+
+```console
+# build docker image
+$ docker build -t meds .
+
+# run docker image
+$ docker run --cap-add=SYS_PTRACE -it meds /bin/bash
+```
+
 # Testing MEDS
 - MEDS's testing runs original ASAN's testcases as well as MEDS
   specific testcases.
