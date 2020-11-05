@@ -589,9 +589,12 @@ class LargeMmapAliasing {
       stats.currently_allocated -= h->map_size;
       stat->Sub(AllocatorStatAllocated, h->map_size);
       stat->Sub(AllocatorStatMapped, h->map_size);
+      uptr beg = h->map_beg;
+      uptr size = h->map_size;
+      MapUnmapCallback().OnUnmap(beg, size);
+      UnmapOrDie(reinterpret_cast<void*>(beg), size);
+      MmapFixedNoAccess(beg, size);
     }
-    MapUnmapCallback().OnUnmap(h->map_beg, h->map_size);
-    UnmapOrDie(reinterpret_cast<void*>(h->map_beg), h->map_size);
   }
 
   uptr TotalMemoryUsed() {
