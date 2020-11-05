@@ -116,12 +116,12 @@ $ clang -fsanitize=meds -mllvm -meds-stack=1 test.c -o test
 - Example: to protect heap/global using MEDS and stack using ASAN
 
 ```console
-$ clang -fsanitize=meds -mllvm -meds-globals=1 -mcmodel=large -Wl,-emit-relocs test.c -o test
+$ clang -fsanitize=meds -mllvm -meds-global=1 -mcmodel=large -Wl,-emit-relocs test.c -o test
 ```
 
 - Example: to protect heap/stack/global using MEDS
 ```console
-$ clang -fsanitize=meds -mllvm -meds-stack=1 -mllvm -meds-globals=1 -mcmodel=large -Wl,--emit-relocs
+$ clang -fsanitize=meds -mllvm -meds-stack=1 -mllvm -meds-global=1 -mcmodel=large -Wl,--emit-relocs
 ```
 
 # Contributors
