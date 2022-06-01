@@ -3090,11 +3090,11 @@ void MedsStackPoisoner::initializeCallbacks(Module &M) {
 
   MedsStackAlloc = checkSanitizerInterfaceFunction(M.getOrInsertFunction(
       "__meds_stack_alloc", IntptrTy, IntptrTy, nullptr));
-  assert(MedsStackAlloc && "Meds failed to lcoate __meds_stack_alloc");
+  assert(MedsStackAlloc && "Meds failed to locate __meds_stack_alloc");
 
   MedsStackFree = checkSanitizerInterfaceFunction(M.getOrInsertFunction(
       "__meds_stack_free", IRB.getVoidTy(), IntptrTy, nullptr));
-  assert(MedsStackFree && "Meds failed to lcoate __meds_stack_freec");
+  assert(MedsStackFree && "Meds failed to locate __meds_stack_freec");
 }
 
 void MedsStackPoisoner::processStaticAllocas() {
